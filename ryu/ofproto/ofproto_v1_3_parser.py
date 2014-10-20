@@ -72,6 +72,37 @@ def _register_parser(cls):
     _MSG_PARSERS[cls.cls_msg_type] = cls.parser
     return cls
 
+'''
+Flags are 32, numbered from 0 to 31 from right to left
+
+maskedflags("0*1100")       -> **************************0*1100 -> (12,47)
+maskedflags("0*1100",12)    -> ***************0*1100*********** -> (49152, 192512)
+
+'''
+def maskedflags(string,offset=0):
+    import re
+    str_len=len(string)
+    if re.search('r[^01*]', string) or str_len>32 or str_len<1:
+        print("ERROR: flags string can only contain 0,1 and * and must have at least 1 bit and at most 32 bits!")
+        return (0,0)
+    if offset>31 or offset<0:
+        print("ERROR: offset must be in range 0-31!")
+        return (0,0)
+    if str_len+offset>32:
+        print("ERROR: offset is too big")
+        return (0,0)
+
+    mask=['0']*32
+    value=['0']*32
+
+    for i in range(offset,str_len+offset):
+        if not string[str_len-1+offset-i]=="*":
+            mask[31-i]="1"
+            value[31-i]=string[str_len-1+offset-i]
+    mask=''.join(mask)
+    value=''.join(value)
+    return (int(value,2),int(mask,2))
+
 
 @ofproto_parser.register_msg_parser(ofproto.OFP_VERSION)
 def msg_parser(datapath, version, msg_type, msg_len, xid, buf):
@@ -604,6 +635,8 @@ class Flow(object):
         self.in_port = 0
         self.in_phy_port = 0
         self.metadata = 0
+        self.state = 0
+        self.flags = 0
         self.dl_dst = mac.DONTCARE
         self.dl_src = mac.DONTCARE
         self.dl_type = 0
@@ -646,6 +679,7 @@ class Flow(object):
 class FlowWildcards(object):
     def __init__(self):
         self.metadata_mask = 0
+        self.flags_mask = 0
         self.dl_dst_mask = 0
         self.dl_src_mask = 0
         self.vlan_vid_mask = 0
@@ -688,6 +722,8 @@ class OFPMatch(StringifyMixin):
     in_port          Integer 32bit   Switch input port
     in_phy_port      Integer 32bit   Switch physical input port
     metadata         Integer 64bit   Metadata passed between tables
+    state            Integer 32bit   Flow State
+    flags            Integer 32bit   Global States
     eth_dst          MAC address     Ethernet destination address
     eth_src          MAC address     Ethernet source address
     eth_type         Integer 16bit   Ethernet frame type
@@ -865,6 +901,7 @@ class OFPMatch(StringifyMixin):
         OXM_OF_IN_PORT         Switch input port
         OXM_OF_IN_PHY_PORT     Switch physical input port
         OXM_OF_METADATA        Metadata passed between tables
+        OXM_OF_FLAGS           Global States
         OXM_OF_ETH_DST         Ethernet destination address
         OXM_OF_ETH_SRC         Ethernet source address
         OXM_OF_ETH_TYPE        Ethernet frame type
@@ -960,6 +997,18 @@ class OFPMatch(StringifyMixin):
                 header = ofproto.OXM_OF_METADATA_W
             self.append_field(header, self._flow.metadata,
                               self._wc.metadata_mask)
+
+        if self._wc.ft_test(ofproto.OFPXMT_OFB_STATE):
+            self.append_field(ofproto.OXM_OF_STATE,
+                              self._flow.state)
+
+        if self._wc.ft_test(ofproto.OFPXMT_OFB_FLAGS):
+            if self._wc.flags_mask == UINT32_MAX:
+                header = ofproto.OXM_OF_FLAGS
+            else:
+                header = ofproto.OXM_OF_FLAGS_W
+            self.append_field(header, self._flow.flags,
+                              self._wc.flags_mask)
 
         if self._wc.ft_test(ofproto.OFPXMT_OFB_ETH_DST):
             if self._wc.dl_dst_mask:
@@ -1224,6 +1273,18 @@ class OFPMatch(StringifyMixin):
         self._wc.ft_set(ofproto.OFPXMT_OFB_METADATA)
         self._wc.metadata_mask = mask
         self._flow.metadata = metadata & mask
+
+    def set_state(self, state):
+        self._wc.ft_set(ofproto.OFPXMT_OFB_STATE)
+        self._flow.state = state
+
+    def set_flags(self, flags):
+        self.set_flags_masked(flags, UINT32_MAX)
+
+    def set_flags_masked(self, flags, mask):
+        self._wc.ft_set(ofproto.OFPXMT_OFB_FLAGS)
+        self._wc.flags_mask = mask
+        self._flow.flags = flags & mask
 
     def set_dl_dst(self, dl_dst):
         self._wc.ft_set(ofproto.OFPXMT_OFB_ETH_DST)
@@ -1576,6 +1637,24 @@ class MTMetadata(OFPMatchField):
 
     def __init__(self, header, value, mask=None):
         super(MTMetadata, self).__init__(header)
+        self.value = value
+        self.mask = mask
+
+@OFPMatchField.register_field_header([ofproto.OXM_OF_STATE])
+class MTState(OFPMatchField):
+    pack_str = '!I'
+
+    def __init__(self, header, value, mask=None):
+        super(MTState, self).__init__(header)
+        self.value = value
+
+@OFPMatchField.register_field_header([ofproto.OXM_OF_FLAGS,
+                                      ofproto.OXM_OF_FLAGS_W])
+class MTFlags(OFPMatchField):
+    pack_str = '!I'
+
+    def __init__(self, header, value, mask=None):
+        super(MTFlags, self).__init__(header)
         self.value = value
         self.mask = mask
 
@@ -3209,6 +3288,39 @@ class OFPActionSetState(OFPAction):
     def serialize(self, buf, offset):
         msg_pack_into(ofproto.OFP_ACTION_SET_STATE_PACK_STR,
                       buf, offset, self.type, self.len, self.state, self.stage_id, self.bw_flag)
+
+@OFPAction.register_action_type(ofproto.OFPAT_SET_FLAG,ofproto.OFP_ACTION_SET_FLAG_SIZE)
+class OFPActionSetFlag(OFPAction):
+    """ 
+    Set flag action
+
+    This action updates flags in the switch global state.
+    
+    ================ ======================================================
+    Attribute        Description
+    ================ ======================================================
+    value            Flags value
+    mask             Mask value
+    ================ ======================================================
+    """
+    def __init__(self, value, mask=0xffffffff, type_=None, len_=None):
+        super(OFPActionSetFlag, self).__init__()
+        self.type = ofproto.OFPAT_SET_FLAG
+        self.len = ofproto.OFP_ACTION_SET_FLAG_SIZE
+        self.value = value
+        self.mask = mask
+
+    @classmethod
+    def parser(cls, buf, offset):
+        (type_, len_, value, mask) = struct.unpack_from(
+            ofproto.OFP_ACTION_SET_FLAG_PACK_STR,
+            buf, offset)
+        return cls(value, mask)
+
+    def serialize(self, buf, offset):
+        msg_pack_into(ofproto.OFP_ACTION_SET_FLAG_PACK_STR,
+                      buf, offset, self.type, self.len, self.value, self.mask)
+
 
 class OFPBucket(StringifyMixin):
     def __init__(self, weight=0, watch_port=ofproto.OFPP_ANY,
@@ -5993,10 +6105,34 @@ class OFPStateEntry(MsgBase):
 
 
     def _serialize_body(self):
-        msg_pack_into(ofproto.OFP_STATE_MOD_ENTRY_PACK_STR,self.buf,ofproto.OFP_HEADER_SIZE,
-		      self.cookie, self.cookie_mask, self.table_id,self.command,self.key_list[0],
-			self.key_count,self.state)
-        offset=(ofproto.OFP_STATE_MOD_SIZE-key_count)
-	for element in self.keys:
-	    element.serialized(self.buf,offset)
-	    offset+=element.len
+        msg_pack_into(ofproto.OFP_STATE_MOD_PACK_STR,self.buf,ofproto.OFP_HEADER_SIZE,self.cookie, self.cookie_mask, self.table_id,self.command)
+        offset=ofproto.OFP_STATE_MOD_SIZE
+
+        msg_pack_into(ofproto.OFP_STATE_MOD_ENTRY_PACK_STR,self.buf,offset,self.key_count,self.state)
+
+        offset += ofproto.OFP_STATE_MOD_ENTRY_SIZE
+
+        field_extract_format='!B'
+
+        if self.key_count <= ofproto.MAX_KEY_LEN:
+            for f in range(self.key_count):
+                msg_pack_into(field_extract_format,self.buf,offset,self.keys[f])
+                offset +=1
+        else:
+            LOG.error("OFPKeyExtract: Number of fields given > MAX_FIELD_COUNT")
+
+
+@_set_msg_type(ofproto.OFPT_FLAG_MOD)
+class OFPFlagMod(MsgBase):
+    def __init__(self, datapath, command, flag=0, flag_mask=0,
+                 ):
+        super(OFPFlagMod, self).__init__(datapath)
+        self.flag = flag
+        self.flag_mask = flag_mask
+        self.command = command
+
+    
+    def _serialize_body(self):
+
+        msg_pack_into(ofproto.OFP_FLAG_MOD_PACK_STR,self.buf,ofproto.OFP_HEADER_SIZE,self.flag,self.flag_mask,self.command)
+        offset=ofproto.OFP_FLAG_MOD_SIZE
