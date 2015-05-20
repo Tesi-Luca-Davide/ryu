@@ -62,8 +62,8 @@ class OSLoadBalancing(app_manager.RyuApp):
         self.send_group_mod(datapath)
         self.send_table_mod(datapath)
 
-        self.send_key_lookup_1(datapath)
-        self.send_key_update_1(datapath)
+        self.send_key_lookup(datapath)
+        self.send_key_update(datapath)
 
         # install table-miss flow entry (if no rule matching, send it to controller)
         # self.add_flow_1(datapath, True)
@@ -80,9 +80,10 @@ class OSLoadBalancing(app_manager.RyuApp):
     def many_to_one_switch(self, datapath):
         self.send_features_request(datapath)
         self.send_table_mod(datapath)
+        self.send_group_mod_3(datapath)
         
-        self.send_key_lookup_2(datapath)
-        self.send_key_update_2(datapath)
+        self.send_key_lookup(datapath)
+        self.send_key_update(datapath)
 
         # install table-miss flow entry (if no rule matching, send it to controller)
         #self.add_flow_3(datapath, True)
@@ -94,8 +95,8 @@ class OSLoadBalancing(app_manager.RyuApp):
         self.send_group_mod_2(datapath)
         self.send_table_mod_2(datapath)
 
-        self.send_key_lookup_1(datapath)
-        self.send_key_update_1(datapath)
+        self.send_key_lookup(datapath)
+        self.send_key_update(datapath)
 
         # install table-miss flow entry (if no rule matching, send it to controller)
         # self.add_flow_1(datapath, True)
@@ -143,18 +144,22 @@ class OSLoadBalancing(app_manager.RyuApp):
 
             
             # Reverse path flow
-            for in_port in range(2, SWITCH_PORTS + 1):
-                match = parser.OFPMatch(in_port=in_port)
+            for in_port in range(2,SWITCH_PORTS+1):
+                # if state=DEFAULT => send it to the first group entry in the group table
                 actions = [
-                    parser.OFPActionOutput(1,0)]
-                inst = [parser.OFPInstructionActions(
+                        parser.OFPActionOutput(1),
+                        parser.OFPActionSetState(in_port-1, 0, bw_flag=1)]
+                match = parser.OFPMatch(
+                        in_port=in_port, state=0, eth_type=0x800)
+                inst = [
+                parser.OFPInstructionActions(
                     ofproto.OFPIT_APPLY_ACTIONS, actions)]
                 mod = parser.OFPFlowMod(
                     datapath=datapath, cookie=0, cookie_mask=0, table_id=0,
-                    command=ofproto.OFPFC_ADD, idle_timeout=0, hard_timeout=0,
-                    priority=32767, buffer_id=ofproto.OFP_NO_BUFFER,
-                    out_port=ofproto.OFPP_ANY,
-                    out_group=ofproto.OFPG_ANY,
+                    command=ofproto.OFPFC_ADD, idle_timeout=0,
+                    hard_timeout=0, priority=32767,
+                    buffer_id=ofproto.OFP_NO_BUFFER,
+                    out_port=ofproto.OFPP_ANY, out_group=ofproto.OFPG_ANY,
                     flags=0, match=match, instructions=inst)
                 datapath.send_msg(mod)
 
@@ -278,10 +283,17 @@ class OSLoadBalancing(app_manager.RyuApp):
 
             
             # Reverse path flow
-            for state in range(1,SWITCH_PORTS):
-                match = parser.OFPMatch(in_port=4, state=state, eth_type=0x800)
-                actions = [
-                    parser.OFPActionOutput(state,0)]
+            for state in range(SWITCH_PORTS):
+                if state == 0:
+                    # if state=DEFAULT => send it to the first group entry in the group table
+                    actions = [
+                            parser.OFPActionGroup(1)]
+                    match = parser.OFPMatch(
+                            in_port=4, state=state, eth_type=0x800)
+                else:
+                    match = parser.OFPMatch(in_port=4, state=state, eth_type=0x800)
+                    actions = [
+                        parser.OFPActionOutput(state,0)]
                 inst = [parser.OFPInstructionActions(
                     ofproto.OFPIT_APPLY_ACTIONS, actions)]
                 mod = parser.OFPFlowMod(
@@ -298,7 +310,7 @@ class OSLoadBalancing(app_manager.RyuApp):
                 # state x means output port x+1
                 actions = [
                     parser.OFPActionOutput(4, 0),
-                    parser.OFPActionSetState(in_port, 0)]
+                    parser.OFPActionSetState(in_port, 0, bw_flag=1)]
                 match = parser.OFPMatch(
                     in_port=in_port, eth_type=0x800)
                 inst = [
@@ -394,6 +406,23 @@ class OSLoadBalancing(app_manager.RyuApp):
 
             # the state of a flow is the selected output port for that flow
             for in_port in range(4,7):
+                # if state=DEFAULT => send it to the first group entry in the group table
+                actions = [
+                        parser.OFPActionGroup(2),
+                        parser.OFPActionSetState(in_port, 0, bw_flag=1)]
+                match = parser.OFPMatch(
+                        in_port=in_port, state=0, eth_type=0x800)
+                inst = [
+                parser.OFPInstructionActions(
+                    ofproto.OFPIT_APPLY_ACTIONS, actions)]
+                mod = parser.OFPFlowMod(
+                    datapath=datapath, cookie=0, cookie_mask=0, table_id=0,
+                    command=ofproto.OFPFC_ADD, idle_timeout=0,
+                    hard_timeout=0, priority=32767,
+                    buffer_id=ofproto.OFP_NO_BUFFER,
+                    out_port=ofproto.OFPP_ANY, out_group=ofproto.OFPG_ANY,
+                    flags=0, match=match, instructions=inst)
+                datapath.send_msg(mod)
 
                 for state in range(1,4):
                     # state x means output port x+1
@@ -456,6 +485,45 @@ class OSLoadBalancing(app_manager.RyuApp):
                                          ofp.OFPGT_RANDOM, group_id, buckets)
             datapath.send_msg(req)
 
+            buckets = []
+            # Action Bucket: <PWD port_i , SetState(i-1)
+            for port in range(1,4):
+                max_len = 2000
+                actions = [
+                    ofp_parser.OFPActionOutput(port, max_len),
+                    ofp_parser.OFPActionSetState(port, 0)]
+
+                weight = 0
+                watch_port = ofp.OFPP_ANY
+                watch_group = ofp.OFPG_ANY
+                buckets.append(ofp_parser.OFPBucket(weight, watch_port, watch_group,actions))
+
+            group_id = 2
+            req = ofp_parser.OFPGroupMod(datapath, ofp.OFPGC_ADD,
+                                         ofp.OFPGT_RANDOM, group_id, buckets)
+            datapath.send_msg(req)
+
+    def send_group_mod_3(self, datapath):
+            ofp = datapath.ofproto
+            ofp_parser = datapath.ofproto_parser
+            buckets = []
+            # Action Bucket: <PWD port_i , SetState(i-1)
+            for port in range(1,SWITCH_PORTS):
+                max_len = 2000
+                actions = [
+                    ofp_parser.OFPActionOutput(port, max_len),
+                    ofp_parser.OFPActionSetState(port-1, 0)]
+
+                weight = 0
+                watch_port = ofp.OFPP_ANY
+                watch_group = ofp.OFPG_ANY
+                buckets.append(ofp_parser.OFPBucket(weight, watch_port, watch_group,actions))
+
+            group_id = 1
+            req = ofp_parser.OFPGroupMod(datapath, ofp.OFPGC_ADD,
+                                         ofp.OFPGT_RANDOM, group_id, buckets)
+            datapath.send_msg(req)
+
     def send_table_mod(self, datapath):
         ofp = datapath.ofproto
         ofp_parser = datapath.ofproto_parser
@@ -476,22 +544,12 @@ class OSLoadBalancing(app_manager.RyuApp):
         req = ofp_parser.OFPFeaturesRequest(datapath)
         datapath.send_msg(req)
 
-    def send_key_lookup_1(self, datapath):
+    def send_key_lookup(self, datapath):
         ofp = datapath.ofproto
         key_lookup_extractor = datapath.ofproto_parser.OFPKeyExtract(datapath, ofp.OFPSC_SET_L_EXTRACTOR, 4, [ofp.OXM_OF_IPV4_SRC,ofp.OXM_OF_IPV4_DST,ofp.OXM_OF_TCP_SRC,ofp.OXM_OF_TCP_DST])
         datapath.send_msg(key_lookup_extractor)
 
-    def send_key_update_1(self, datapath):
+    def send_key_update(self, datapath):
         ofp = datapath.ofproto
         key_update_extractor = datapath.ofproto_parser.OFPKeyExtract(datapath, ofp.OFPSC_SET_U_EXTRACTOR, 4, [ofp.OXM_OF_IPV4_SRC,ofp.OXM_OF_IPV4_DST,ofp.OXM_OF_TCP_SRC,ofp.OXM_OF_TCP_DST])
-        datapath.send_msg(key_update_extractor)
-
-    def send_key_lookup_2(self, datapath):
-        ofp = datapath.ofproto
-        key_lookup_extractor = datapath.ofproto_parser.OFPKeyExtract(datapath, ofp.OFPSC_SET_L_EXTRACTOR, 4, [ofp.OXM_OF_IPV4_SRC,ofp.OXM_OF_IPV4_DST,ofp.OXM_OF_TCP_SRC,ofp.OXM_OF_TCP_DST])
-        datapath.send_msg(key_lookup_extractor)
-
-    def send_key_update_2(self, datapath):
-        ofp = datapath.ofproto
-        key_update_extractor = datapath.ofproto_parser.OFPKeyExtract(datapath, ofp.OFPSC_SET_U_EXTRACTOR,  4, [ofp.OXM_OF_IPV4_DST,ofp.OXM_OF_IPV4_SRC,ofp.OXM_OF_TCP_DST,ofp.OXM_OF_TCP_SRC])
         datapath.send_msg(key_update_extractor)
