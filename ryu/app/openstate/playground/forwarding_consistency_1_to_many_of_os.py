@@ -78,8 +78,8 @@ class OSLoadBalancing(app_manager.RyuApp):
             
                 self.add_flow(datapath, in_port, out_port, ip_src, ip_dst, tcp_src, tcp_dst)
 
-                dest_ip="10.0.0."+str(out_port)
-                dest_eth="00:00:00:00:00:0"+str(out_port)
+                dest_ip=self.int_to_ip_str(out_port)
+                dest_eth=self.int_to_mac_str(out_port)
                 dest_tcp=out_port*100
                 actions = [
                     ofparser.OFPActionSetField(ipv4_dst=dest_ip),
@@ -132,8 +132,8 @@ class OSLoadBalancing(app_manager.RyuApp):
 
         # Reverse path flow
         for in_port in range(2, SWITCH_PORTS + 1):
-            src_ip="10.0.0."+str(in_port)
-            src_eth="00:00:00:00:00:0"+str(in_port)
+            src_ip=self.int_to_ip_str(in_port)
+            src_eth=self.int_to_mac_str(in_port)
             src_tcp=in_port*100
             # we need to match an IPv4 (0x800) TCP (6) packet to do SetField()
             match = ofparser.OFPMatch(in_port=in_port, eth_type=0x800, ip_proto=6, ipv4_src=src_ip,eth_src=src_eth,tcp_src=src_tcp)
@@ -171,8 +171,8 @@ class OSLoadBalancing(app_manager.RyuApp):
     def add_flow(self, datapath, in_port, out_port, ip_src, ip_dst, tcp_src, tcp_dst):        
         self.counter+=1
         LOG.info('Installing new forward rule for switch %d (rule # %d)' % (datapath.id, self.counter)) 
-        dest_ip="10.0.0."+str(out_port)
-        dest_eth="00:00:00:00:00:0"+str(out_port)
+        dest_ip=self.int_to_ip_str(out_port)
+        dest_eth=self.int_to_mac_str(out_port)
         dest_tcp=out_port*100
         actions = [
             ofparser.OFPActionSetField(ipv4_dst=dest_ip),
@@ -213,5 +213,12 @@ class OSLoadBalancing(app_manager.RyuApp):
     def ip_addr_ntoa(self,ip):
         return socket.inet_ntoa(addrconv.ipv4.text_to_bin(ip))
 
+    # returns "xx:xx:xx:xx:xx:xx"
+    def int_to_mac_str(self, host_number):
+        mac_str = "{0:0{1}x}".format(int(host_number),12) # converts to hex with zero pad to 48bit
+        return ':'.join(mac_str[i:i+2] for i in range(0, len(mac_str), 2)) # adds ':'
 
-
+    # returns "10.x.x.x"
+    def int_to_ip_str(self, host_number):
+        ip = (10<<24) + int(host_number)
+        return ".".join(map(lambda n: str(ip>>n & 0xFF), [24,16,8,0]))
