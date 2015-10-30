@@ -17,13 +17,15 @@ from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER
 from ryu.controller.handler import set_ev_cls
-from ryu.ofproto import ofproto_v1_3
 from ryu.lib.packet import packet
 from ryu.lib.packet import ethernet
+import ryu.ofproto.ofproto_v1_3 as ofp
+import ryu.ofproto.ofproto_v1_3_parser as ofparser
+import ryu.ofproto.openstate_v1_0 as osp
+import ryu.ofproto.openstate_v1_0_parser as osparser
 
 
 class SimpleSwitch13(app_manager.RyuApp):
-    OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
     def __init__(self, *args, **kwargs):
         super(SimpleSwitch13, self).__init__(*args, **kwargs)
@@ -32,10 +34,6 @@ class SimpleSwitch13(app_manager.RyuApp):
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
         datapath = ev.msg.datapath
-        ofproto = datapath.ofproto
-        parser = datapath.ofproto_parser
-        
-        self.send_table_mod(datapath)
 
         '''
         Test da fare:
@@ -51,7 +49,13 @@ class SimpleSwitch13(app_manager.RyuApp):
         7) State mod msg extractor: "lookup-scope and update-scope must provide same length keys"
         8) State mod add flow: must be executed onto a stage with table_id less or equal than the number of pipeline's tables
 
+        
+        ''' 
+
+        '''[TEST 0]
+        NON si dovrebbero riuscire a configurare gli estrattori
         '''
+        self.test0(datapath)
 
 
         ''' [TEST 1]
@@ -117,215 +121,195 @@ class SimpleSwitch13(app_manager.RyuApp):
         ''' [TEST 12]
         mininet> h5 ping -c5 h6
         Dovrebbe perdersi solo il primo ping'''
-        self.test12(datapath)  
+        #self.test12(datapath)  
 
 
     def add_flow(self, datapath, priority, match, actions):
-        ofproto = datapath.ofproto
-        parser = datapath.ofproto_parser
 
-
-        inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS,
+        inst = [ofparser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS,
                                              actions)]
 
-        mod = parser.OFPFlowMod(
+        mod = ofparser.OFPFlowMod(
                 datapath=datapath, cookie=0, cookie_mask=0, table_id=0,
-                command=ofproto.OFPFC_ADD, idle_timeout=0, hard_timeout=0,
-                priority=priority, buffer_id=ofproto.OFP_NO_BUFFER,
-                out_port=ofproto.OFPP_ANY,
-                out_group=ofproto.OFPG_ANY,
+                command=ofp.OFPFC_ADD, idle_timeout=0, hard_timeout=0,
+                priority=priority, buffer_id=ofp.OFP_NO_BUFFER,
+                out_port=ofp.OFPP_ANY,
+                out_group=ofp.OFPG_ANY,
                 flags=0, match=match, instructions=inst)
         datapath.send_msg(mod)
 
     def send_table_mod(self, datapath):
-        ofp = datapath.ofproto
-        ofp_parser = datapath.ofproto_parser
-        req = ofp_parser.OFPExpMsgConfigureStatefulTable(datapath=datapath, table_id=0, stateful=1)
+        req = osparser.OFPExpMsgConfigureStatefulTable(datapath=datapath, table_id=0, stateful=1)
         datapath.send_msg(req)
 
     def send_key_lookup(self, datapath):
-        ofp = datapath.ofproto
-        key_lookup_extractor = datapath.ofproto_parser.OFPExpMsgKeyExtract(datapath=datapath, command=ofp.OFPSC_EXP_SET_L_EXTRACTOR, fields=[ofp.OXM_OF_ETH_SRC,ofp.OXM_OF_ETH_DST], table_id=0)
+        key_lookup_extractor = osparser.OFPExpMsgKeyExtract(datapath=datapath, command=osp.OFPSC_EXP_SET_L_EXTRACTOR, fields=[ofp.OXM_OF_ETH_SRC,ofp.OXM_OF_ETH_DST], table_id=0)
         datapath.send_msg(key_lookup_extractor)
 
     def send_key_update(self, datapath):
-        ofp = datapath.ofproto
-        key_update_extractor = datapath.ofproto_parser.OFPExpMsgKeyExtract(datapath=datapath, command=ofp.OFPSC_EXP_SET_U_EXTRACTOR, fields=[ofp.OXM_OF_ETH_SRC,ofp.OXM_OF_ETH_DST], table_id=0)
+        key_update_extractor = osparser.OFPExpMsgKeyExtract(datapath=datapath, command=osp.OFPSC_EXP_SET_U_EXTRACTOR, fields=[ofp.OXM_OF_ETH_SRC,ofp.OXM_OF_ETH_DST], table_id=0)
         datapath.send_msg(key_update_extractor)
 
-    def test1(self,datapath):
-        ofproto=datapath.ofproto
-        parser=datapath.ofproto_parser
+    def test0(self,datapath):
         self.send_key_lookup(datapath)
         self.send_key_update(datapath)
-        actions = [parser.OFPActionOutput(2,0)]
-        match = parser.OFPMatch(in_port=1,state=6)
+        
+
+    def test1(self,datapath):
+        self.send_table_mod(datapath)
+        self.send_key_lookup(datapath)
+        self.send_key_update(datapath)
+        actions = [ofparser.OFPActionOutput(2,0)]
+        match = ofparser.OFPMatch(in_port=1,state=6)
         self.add_flow(datapath, 150, match, actions)
 
-        actions = [parser.OFPExpActionSetState(state=6,table_id=10)]
-        match = parser.OFPMatch(in_port=1)
+        actions = [osparser.OFPExpActionSetState(state=6,table_id=10)]
+        match = ofparser.OFPMatch(in_port=1)
         self.add_flow(datapath, 100, match, actions)
 
-        actions = [parser.OFPActionOutput(1,0)]
-        match = parser.OFPMatch(in_port=2)
+        actions = [ofparser.OFPActionOutput(1,0)]
+        match = ofparser.OFPMatch(in_port=2)
         self.add_flow(datapath, 200, match, actions)
 
     def test2(self,datapath):
-        ofproto=datapath.ofproto
-        parser=datapath.ofproto_parser
+        self.send_table_mod(datapath)
         self.send_key_lookup(datapath)
         self.send_key_update(datapath)
-        actions = [parser.OFPActionOutput(2,0)]
-        match = parser.OFPMatch(in_port=1,state=6)
+        actions = [ofparser.OFPActionOutput(2,0)]
+        match = ofparser.OFPMatch(in_port=1,state=6)
         self.add_flow(datapath, 150, match, actions)
 
-        actions = [parser.OFPExpActionSetState(state=6,table_id=200)]
-        match = parser.OFPMatch(in_port=1)
+        actions = [osparser.OFPExpActionSetState(state=6,table_id=200)]
+        match = ofparser.OFPMatch(in_port=1)
         self.add_flow(datapath, 100, match, actions)
 
-        actions = [parser.OFPActionOutput(1,0)]
-        match = parser.OFPMatch(in_port=2)
+        actions = [ofparser.OFPActionOutput(1,0)]
+        match = ofparser.OFPMatch(in_port=2)
         self.add_flow(datapath, 200, match, actions)
 
     def test3(self,datapath):
-        ofproto=datapath.ofproto
-        parser=datapath.ofproto_parser
-        ofp = datapath.ofproto
+        self.send_table_mod(datapath)
         # I declare more fields than provided
-        key_lookup_extractor = datapath.ofproto_parser.OFPExpMsgKeyExtract(datapath=datapath, command=ofp.OFPSC_EXP_SET_L_EXTRACTOR, fields=[ofp.OXM_OF_ETH_SRC,ofp.OXM_OF_ETH_DST], table_id=0)
+        key_lookup_extractor = osparser.OFPExpMsgKeyExtract(datapath=datapath, command=osp.OFPSC_EXP_SET_L_EXTRACTOR, fields=[ofp.OXM_OF_ETH_SRC,ofp.OXM_OF_ETH_DST], table_id=0)
         datapath.send_msg(key_lookup_extractor)
         # I provide more fields than declared
-        key_lookup_extractor = datapath.ofproto_parser.OFPExpMsgKeyExtract(datapath=datapath, command=ofp.OFPSC_EXP_SET_L_EXTRACTOR, fields=[ofp.OXM_OF_ETH_SRC,ofp.OXM_OF_ETH_DST], table_id=0)
+        key_lookup_extractor = osparser.OFPExpMsgKeyExtract(datapath=datapath, command=osp.OFPSC_EXP_SET_L_EXTRACTOR, fields=[ofp.OXM_OF_ETH_SRC,ofp.OXM_OF_ETH_DST], table_id=0)
         datapath.send_msg(key_lookup_extractor)
         # I provide and declared zero fields => it's consistent but I cannot set an empty extractor!
-        key_lookup_extractor = datapath.ofproto_parser.OFPExpMsgKeyExtract(datapath=datapath, command=ofp.OFPSC_EXP_SET_L_EXTRACTOR, fields=[], table_id=0)
+        key_lookup_extractor = osparser.OFPExpMsgKeyExtract(datapath=datapath, command=osp.OFPSC_EXP_SET_L_EXTRACTOR, fields=[], table_id=0)
         datapath.send_msg(key_lookup_extractor)
         # I provide and declared more fields than allowed
-        key_lookup_extractor = datapath.ofproto_parser.OFPExpMsgKeyExtract(datapath=datapath, command=ofp.OFPSC_EXP_SET_L_EXTRACTOR, fields=[ofp.OXM_OF_ETH_SRC,ofp.OXM_OF_ETH_DST,ofp.OXM_OF_IPV4_DST,ofp.OXM_OF_TCP_SRC,ofp.OXM_OF_TCP_DST,ofp.OXM_OF_UDP_SRC,ofp.OXM_OF_UDP_DST], table_id=0)
+        key_lookup_extractor = osparser.OFPExpMsgKeyExtract(datapath=datapath, command=osp.OFPSC_EXP_SET_L_EXTRACTOR, fields=[ofp.OXM_OF_ETH_SRC,ofp.OXM_OF_ETH_DST,ofp.OXM_OF_IPV4_DST,ofp.OXM_OF_TCP_SRC,ofp.OXM_OF_TCP_DST,ofp.OXM_OF_UDP_SRC,ofp.OXM_OF_UDP_DST], table_id=0)
         datapath.send_msg(key_lookup_extractor)
 
     def test4(self,datapath):
-        ofproto=datapath.ofproto
-        parser=datapath.ofproto_parser
+        self.send_table_mod(datapath)
         self.send_key_lookup(datapath)
         self.send_key_update(datapath)
         # I provide more keys than declared
-        state = datapath.ofproto_parser.OFPExpMsgSetFlowState(datapath=datapath, state=88, keys=[0,0,0,0,0,2,0,0,0,0,0,4,8], table_id=0)
+        state = osparser.OFPExpMsgSetFlowState(datapath=datapath, state=88, keys=[0,0,0,0,0,2,0,0,0,0,0,4,8], table_id=0)
         datapath.send_msg(state)
         # I declare more keys than provided
-        state = datapath.ofproto_parser.OFPExpMsgSetFlowState(datapath=datapath, state=88, keys=[0,0,0,0,0,2,0,0,0,0,0,4,8], table_id=0)
+        state = osparser.OFPExpMsgSetFlowState(datapath=datapath, state=88, keys=[0,0,0,0,0,2,0,0,0,0,0,4,8], table_id=0)
         datapath.send_msg(state)
         # I provide and declared zero keys => it's consistent but I cannot access the state table with an empty key!
-        state = datapath.ofproto_parser.OFPExpMsgSetFlowState(datapath=datapath, state=88, keys=[], table_id=0)
+        state = osparser.OFPExpMsgSetFlowState(datapath=datapath, state=88, keys=[], table_id=0)
         datapath.send_msg(state)
         # I provide and declared more keys than allowed
-        state = datapath.ofproto_parser.OFPExpMsgSetFlowState(datapath=datapath, state=88, keys=[0,0,0,0,0,2,0,0,0,0,0,4,0,0,0,0,0,2,0,0,0,0,0,4,0,0,0,0,0,2,0,0,0,0,0,4,0,0,0,0,0,2,0,0,0,0,0,4,5], table_id=0)
+        state = osparser.OFPExpMsgSetFlowState(datapath=datapath, state=88, keys=[0,0,0,0,0,2,0,0,0,0,0,4,0,0,0,0,0,2,0,0,0,0,0,4,0,0,0,0,0,2,0,0,0,0,0,4,0,0,0,0,0,2,0,0,0,0,0,4,5], table_id=0)
         datapath.send_msg(state)
 
     def test5(self,datapath):
-        ofproto=datapath.ofproto
-        parser=datapath.ofproto_parser
-        ofp = datapath.ofproto
-        key_lookup_extractor = datapath.ofproto_parser.OFPExpMsgKeyExtract(datapath=datapath, command=ofp.OFPSC_EXP_SET_L_EXTRACTOR, fields=[ofp.OXM_OF_ETH_SRC], table_id=0)
+        self.send_table_mod(datapath)
+        key_lookup_extractor = osparser.OFPExpMsgKeyExtract(datapath=datapath, command=osp.OFPSC_EXP_SET_L_EXTRACTOR, fields=[ofp.OXM_OF_ETH_SRC], table_id=0)
         datapath.send_msg(key_lookup_extractor)
-        key_update_extractor = datapath.ofproto_parser.OFPExpMsgKeyExtract(datapath=datapath, command=ofp.OFPSC_EXP_SET_U_EXTRACTOR, fields=[ofp.OXM_OF_ETH_SRC], table_id=0)
+        key_update_extractor = osparser.OFPExpMsgKeyExtract(datapath=datapath, command=osp.OFPSC_EXP_SET_U_EXTRACTOR, fields=[ofp.OXM_OF_ETH_SRC], table_id=0)
         datapath.send_msg(key_update_extractor)
-        state = datapath.ofproto_parser.OFPExpMsgSetFlowState(datapath=datapath, state=88, keys=[10,0,0,5], table_id=0)
+        state = osparser.OFPExpMsgSetFlowState(datapath=datapath, state=88, keys=[10,0,0,5], table_id=0)
         datapath.send_msg(state)
 
     def test6(self,datapath):
-        ofproto=datapath.ofproto
-        parser=datapath.ofproto_parser
-        ofp = datapath.ofproto
-        key_lookup_extractor = datapath.ofproto_parser.OFPExpMsgKeyExtract(datapath=datapath, command=ofp.OFPSC_EXP_SET_L_EXTRACTOR, fields=[ofp.OXM_OF_ETH_SRC], table_id=0)
+        self.send_table_mod(datapath)
+        key_lookup_extractor = osparser.OFPExpMsgKeyExtract(datapath=datapath, command=osp.OFPSC_EXP_SET_L_EXTRACTOR, fields=[ofp.OXM_OF_ETH_SRC], table_id=0)
         datapath.send_msg(key_lookup_extractor)
-        key_update_extractor = datapath.ofproto_parser.OFPExpMsgKeyExtract(datapath=datapath, command=ofp.OFPSC_EXP_SET_U_EXTRACTOR, fields=[ofp.OXM_OF_ETH_SRC], table_id=0)
+        key_update_extractor = osparser.OFPExpMsgKeyExtract(datapath=datapath, command=osp.OFPSC_EXP_SET_U_EXTRACTOR, fields=[ofp.OXM_OF_ETH_SRC], table_id=0)
         datapath.send_msg(key_update_extractor)
-        state = datapath.ofproto_parser.OFPExpMsgSetFlowState(datapath=datapath, command=ofproto.OFPSC_DEL_FLOW_STATE, state=99, keys=[10,0,0,5], table_id=0)
+        state = osparser.OFPExpMsgSetFlowState(datapath=datapath, command=ofproto.OFPSC_DEL_FLOW_STATE, state=99, keys=[10,0,0,5], table_id=0)
         datapath.send_msg(state)
 
     def test7(self,datapath):
-        ofproto=datapath.ofproto
-        parser=datapath.ofproto_parser
-        ofp = datapath.ofproto
-        key_lookup_extractor = datapath.ofproto_parser.OFPExpMsgKeyExtract(datapath=datapath, command=ofp.OFPSC_EXP_SET_L_EXTRACTOR, [ofp.OXM_OF_ETH_SRC,ofp.OXM_OF_ETH_DST], table_id=0)
+        self.send_table_mod(datapath)
+        key_lookup_extractor = osparser.OFPExpMsgKeyExtract(datapath=datapath, command=osp.OFPSC_EXP_SET_L_EXTRACTOR, fields=[ofp.OXM_OF_ETH_SRC,ofp.OXM_OF_ETH_DST], table_id=0)
         datapath.send_msg(key_lookup_extractor)
-        key_update_extractor = datapath.ofproto_parser.OFPExpMsgKeyExtract(datapath=datapath, ofp.OFPSC_EXP_SET_U_EXTRACTOR, [ofp.OXM_OF_ETH_SRC], table_id=0)
+        key_update_extractor = osparser.OFPExpMsgKeyExtract(datapath=datapath, command=osp.OFPSC_EXP_SET_U_EXTRACTOR, fields=[ofp.OXM_OF_ETH_SRC], table_id=0)
         datapath.send_msg(key_update_extractor)
 
     def test7b(self,datapath):
-        ofproto=datapath.ofproto
-        parser=datapath.ofproto_parser
-        ofp = datapath.ofproto
-        key_update_extractor = datapath.ofproto_parser.OFPExpMsgKeyExtract(datapath=datapath, command=ofp.OFPSC_EXP_SET_U_EXTRACTOR, fields=[ofp.OXM_OF_ETH_SRC], table_id=0)
+        self.send_table_mod(datapath)
+        key_update_extractor = osparser.OFPExpMsgKeyExtract(datapath=datapath, command=osp.OFPSC_EXP_SET_U_EXTRACTOR, fields=[ofp.OXM_OF_ETH_SRC], table_id=0)
         datapath.send_msg(key_update_extractor)
-        key_lookup_extractor = datapath.ofproto_parser.OFPExpMsgKeyExtract(datapath=datapath, command=ofp.OFPSC_EXP_SET_L_EXTRACTOR, fields=[ofp.OXM_OF_ETH_SRC,ofp.OXM_OF_ETH_DST], table_id=0)
+        key_lookup_extractor = osparser.OFPExpMsgKeyExtract(datapath=datapath, command=osp.OFPSC_EXP_SET_L_EXTRACTOR, fields=[ofp.OXM_OF_ETH_SRC,ofp.OXM_OF_ETH_DST], table_id=0)
         datapath.send_msg(key_lookup_extractor)
 
     def test8(self,datapath):
-        ofproto=datapath.ofproto
-        parser=datapath.ofproto_parser
+        self.send_table_mod(datapath)
         self.send_key_lookup(datapath)
         self.send_key_update(datapath)
-        state = datapath.ofproto_parser.OFPExpMsgSetFlowState(datapath=datapath, state=88, keys=[0,0,0,0,0,2,0,0,0,0,0,4], table_id=200)
+        state = osparser.OFPExpMsgSetFlowState(datapath=datapath, state=88, keys=[0,0,0,0,0,2,0,0,0,0,0,4], table_id=200)
         datapath.send_msg(state)
 
     def test9(self,datapath):
-        ofproto=datapath.ofproto
-        parser=datapath.ofproto_parser
-        actions = [parser.OFPActionOutput(6,0)]
-        match = parser.OFPMatch(in_port=5,ip_proto=1,eth_type=0x800,flags=2863311530)
+        self.send_table_mod(datapath)
+        actions = [ofparser.OFPActionOutput(6,0)]
+        match = ofparser.OFPMatch(in_port=5,ip_proto=1,eth_type=0x800,flags=2863311530)
         self.add_flow(datapath, 150, match, actions)
 
-        msg = datapath.ofproto_parser.OFPExpSetGlobalState(datapath=datapath, 2863311530, 0xffffffff)
+        msg = osparser.OFPExpSetGlobalState(datapath=datapath, flag=2863311530, flag_mask=s0xffffffff)
         datapath.send_msg(msg)
 
-        actions = [parser.OFPActionOutput(5,0)]
-        match = parser.OFPMatch(in_port=6,ip_proto=1,eth_type=0x800)
+        actions = [ofparser.OFPActionOutput(5,0)]
+        match = ofparser.OFPMatch(in_port=6,ip_proto=1,eth_type=0x800)
         self.add_flow(datapath, 150, match, actions)
 
     def test10(self,datapath):
-        ofproto=datapath.ofproto
-        parser=datapath.ofproto_parser
-        (flag, flag_mask) = parser.maskedflags("1*1*1*1*1*1*1*1*0*0*1*1*1*1*1*1*")
-        actions = [parser.OFPActionOutput(6,0)]
-        match = parser.OFPMatch(in_port=5,eth_type=0x800,ip_proto=1,flags=parser.maskedflags("1*1*1*1*1*1*1*1*0*0*1*1*1*1*1*1*"))
+        self.send_table_mod(datapath)
+        (flag, flag_mask) = osparser.maskedflags("1*1*1*1*1*1*1*1*0*0*1*1*1*1*1*1*")
+        actions = [ofparser.OFPActionOutput(6,0)]
+        match = ofparser.OFPMatch(in_port=5,eth_type=0x800,ip_proto=1,flags=osparser.maskedflags("1*1*1*1*1*1*1*1*0*0*1*1*1*1*1*1*"))
         self.add_flow(datapath, 150, match, actions)
 
-        msg = datapath.ofproto_parser.OFPExpSetGlobalState(datapath=datapath, flag, flag_mask)
+        msg = osparser.OFPExpSetGlobalState(datapath=datapath, flag=flag, flag_mask=flag_mask)
         datapath.send_msg(msg)
 
-        actions = [parser.OFPActionOutput(5,0)]
-        match = parser.OFPMatch(in_port=6,ip_proto=1,eth_type=0x800)
+        actions = [ofparser.OFPActionOutput(5,0)]
+        match = ofparser.OFPMatch(in_port=6,ip_proto=1,eth_type=0x800)
         self.add_flow(datapath, 200, match, actions)
 
     def test11(self,datapath):
-        ofproto=datapath.ofproto
-        parser=datapath.ofproto_parser
-        actions = [parser.OFPActionOutput(6,0)]
-        match = parser.OFPMatch(in_port=5,ip_proto=1,eth_type=0x800,flags=1492)
+        self.send_table_mod(datapath)
+        actions = [ofparser.OFPActionOutput(6,0)]
+        match = ofparser.OFPMatch(in_port=5,ip_proto=1,eth_type=0x800,flags=1492)
         self.add_flow(datapath, 200, match, actions)
 
-        actions = [parser.OFPExpActionSetFlag(flag=1492)]
-        match = parser.OFPMatch(in_port=5,eth_type=0x800,ip_proto=1)
+        actions = [osparser.OFPExpActionSetFlag(flag=1492)]
+        match = ofparser.OFPMatch(in_port=5,eth_type=0x800,ip_proto=1)
         self.add_flow(datapath, 100, match, actions)
 
-        actions = [parser.OFPActionOutput(5,0)]
-        match = parser.OFPMatch(in_port=6,eth_type=0x800,ip_proto=1)
+        actions = [ofparser.OFPActionOutput(5,0)]
+        match = ofparser.OFPMatch(in_port=6,eth_type=0x800,ip_proto=1)
         self.add_flow(datapath, 200, match, actions)
 
     def test12(self,datapath):
-        ofproto=datapath.ofproto
-        parser=datapath.ofproto_parser
-        (flag, flag_mask) = parser.maskedflags("*1*1*1*1*0*0*1*1*1*1*1*1*")
-        actions = [parser.OFPActionOutput(6,0)]
-        match = parser.OFPMatch(in_port=5,eth_type=0x800,ip_proto=1,flags=parser.maskedflags("*1*1*1*1*0*0*1*1*1*1*1*1*"))
+        self.send_table_mod(datapath)
+        (flag, flag_mask) = osparser.maskedflags("*1*1*1*1*0*0*1*1*1*1*1*1*")
+        actions = [ofparser.OFPActionOutput(6,0)]
+        match = ofparser.OFPMatch(in_port=5,eth_type=0x800,ip_proto=1,flags=osparser.maskedflags("*1*1*1*1*0*0*1*1*1*1*1*1*"))
         self.add_flow(datapath, 200, match, actions)
 
-        actions = [parser.OFPExpActionSetFlag(flag=flag, flag_mask=flag_mask)]
-        match = parser.OFPMatch(in_port=5,eth_type=0x800,ip_proto=1)
+        actions = [osparser.OFPExpActionSetFlag(flag=flag, flag_mask=flag_mask)]
+        match = ofparser.OFPMatch(in_port=5,eth_type=0x800,ip_proto=1)
         self.add_flow(datapath, 100, match, actions)
 
-        actions = [parser.OFPActionOutput(5,0)]
-        match = parser.OFPMatch(in_port=6,eth_type=0x800,ip_proto=1)
+        actions = [ofparser.OFPActionOutput(5,0)]
+        match = ofparser.OFPMatch(in_port=6,eth_type=0x800,ip_proto=1)
         self.add_flow(datapath, 200, match, actions)
