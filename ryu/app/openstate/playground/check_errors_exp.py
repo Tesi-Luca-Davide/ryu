@@ -40,6 +40,7 @@ class SimpleSwitch13(app_manager.RyuApp):
 
         [STATE]
 
+        0) State mod msg extractor: setting extractor on stateless stage
         1) Set state action must be performed onto a stateful stage (run-time check)
         2) Set state action must be performed onto a stage with table_id less or equal than the number of pipeline's tables
         3) State mod msg extractor: field_count must be consistent with the number of fields provided in fields
@@ -55,7 +56,7 @@ class SimpleSwitch13(app_manager.RyuApp):
         '''[TEST 0]
         NON si dovrebbero riuscire a configurare gli estrattori
         '''
-        self.test0(datapath)
+        #self.test0(datapath)
 
 
         ''' [TEST 1]
@@ -86,8 +87,8 @@ class SimpleSwitch13(app_manager.RyuApp):
         #self.test7b(datapath)
 
         ''' [TEST 8]
-        dovrebbe tornare un errore (type=1,code=9))'''
         #self.test8(datapath)
+        '''
 
         ####################################################################################################################
 
@@ -189,16 +190,11 @@ class SimpleSwitch13(app_manager.RyuApp):
 
     def test3(self,datapath):
         self.send_table_mod(datapath)
-        # I declare more fields than provided
-        key_lookup_extractor = osparser.OFPExpMsgKeyExtract(datapath=datapath, command=osp.OFPSC_EXP_SET_L_EXTRACTOR, fields=[ofp.OXM_OF_ETH_SRC,ofp.OXM_OF_ETH_DST], table_id=0)
-        datapath.send_msg(key_lookup_extractor)
-        # I provide more fields than declared
-        key_lookup_extractor = osparser.OFPExpMsgKeyExtract(datapath=datapath, command=osp.OFPSC_EXP_SET_L_EXTRACTOR, fields=[ofp.OXM_OF_ETH_SRC,ofp.OXM_OF_ETH_DST], table_id=0)
-        datapath.send_msg(key_lookup_extractor)
-        # I provide and declared zero fields => it's consistent but I cannot set an empty extractor!
+
+        # I provide zero fields => I cannot set an empty extractor!
         key_lookup_extractor = osparser.OFPExpMsgKeyExtract(datapath=datapath, command=osp.OFPSC_EXP_SET_L_EXTRACTOR, fields=[], table_id=0)
         datapath.send_msg(key_lookup_extractor)
-        # I provide and declared more fields than allowed
+        # I provide more fields than allowed
         key_lookup_extractor = osparser.OFPExpMsgKeyExtract(datapath=datapath, command=osp.OFPSC_EXP_SET_L_EXTRACTOR, fields=[ofp.OXM_OF_ETH_SRC,ofp.OXM_OF_ETH_DST,ofp.OXM_OF_IPV4_DST,ofp.OXM_OF_TCP_SRC,ofp.OXM_OF_TCP_DST,ofp.OXM_OF_UDP_SRC,ofp.OXM_OF_UDP_DST], table_id=0)
         datapath.send_msg(key_lookup_extractor)
 
@@ -206,16 +202,10 @@ class SimpleSwitch13(app_manager.RyuApp):
         self.send_table_mod(datapath)
         self.send_key_lookup(datapath)
         self.send_key_update(datapath)
-        # I provide more keys than declared
-        state = osparser.OFPExpMsgSetFlowState(datapath=datapath, state=88, keys=[0,0,0,0,0,2,0,0,0,0,0,4,8], table_id=0)
-        datapath.send_msg(state)
-        # I declare more keys than provided
-        state = osparser.OFPExpMsgSetFlowState(datapath=datapath, state=88, keys=[0,0,0,0,0,2,0,0,0,0,0,4,8], table_id=0)
-        datapath.send_msg(state)
-        # I provide and declared zero keys => it's consistent but I cannot access the state table with an empty key!
+        # I provide zero keys => I cannot access the state table with an empty key!
         state = osparser.OFPExpMsgSetFlowState(datapath=datapath, state=88, keys=[], table_id=0)
         datapath.send_msg(state)
-        # I provide and declared more keys than allowed
+        # I provide more keys than allowed
         state = osparser.OFPExpMsgSetFlowState(datapath=datapath, state=88, keys=[0,0,0,0,0,2,0,0,0,0,0,4,0,0,0,0,0,2,0,0,0,0,0,4,0,0,0,0,0,2,0,0,0,0,0,4,0,0,0,0,0,2,0,0,0,0,0,4,5], table_id=0)
         datapath.send_msg(state)
 
@@ -234,7 +224,7 @@ class SimpleSwitch13(app_manager.RyuApp):
         datapath.send_msg(key_lookup_extractor)
         key_update_extractor = osparser.OFPExpMsgKeyExtract(datapath=datapath, command=osp.OFPSC_EXP_SET_U_EXTRACTOR, fields=[ofp.OXM_OF_ETH_SRC], table_id=0)
         datapath.send_msg(key_update_extractor)
-        state = osparser.OFPExpMsgSetFlowState(datapath=datapath, command=ofproto.OFPSC_DEL_FLOW_STATE, state=99, keys=[10,0,0,5], table_id=0)
+        state = osparser.OFPExpMsgDelFlowState(datapath=datapath, keys=[10,0,0,5], table_id=0)
         datapath.send_msg(state)
 
     def test7(self,datapath):
