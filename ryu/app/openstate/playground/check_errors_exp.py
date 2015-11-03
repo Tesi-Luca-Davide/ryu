@@ -35,95 +35,59 @@ class SimpleSwitch13(app_manager.RyuApp):
     def switch_features_handler(self, ev):
         datapath = ev.msg.datapath
 
-        '''
-        Test da fare:
+        ''' [FLOW STATES] '''
 
-        [STATE]
+        # [TEST 0] Setting the extractor on a stateless stage should be impossible
+        self.test0(datapath)
 
-        0) State mod msg extractor: setting extractor on stateless stage
-        1) Set state action must be performed onto a stateful stage (run-time check)
-        2) Set state action must be performed onto a stage with table_id less or equal than the number of pipeline's tables
-        3) State mod msg extractor: field_count must be consistent with the number of fields provided in fields
-        4) State mod add flow: key_count must be consistent with the number of fields provided in key
-        5) State mod add flow: key_count must be consistent with the number of fields of the update-scope
-        6) State mod del flow: key_count must be consistent with the number of fields of the update-scope
-        7) State mod msg extractor: "lookup-scope and update-scope must provide same length keys"
-        8) State mod add flow: must be executed onto a stage with table_id less or equal than the number of pipeline's tables
+        # [TEST 1] Set state action must be performed onto a stateful stage (run-time check => no error is returned!)
+        # mininet> h1 ping -c5 h2
+        # ping should fail, but rules are correctly installed
+        #self.test1(datapath)
 
-        
-        ''' 
+        # [TEST 2] Set state action must be performed onto a stage with table_id less or equal than the number of pipeline's tables (install-time check)
+        #self.test2(datapath)
 
-        '''[TEST 0]
-        NON si dovrebbero riuscire a configurare gli estrattori
-        '''
-        #self.test0(datapath)
-
-
-        ''' [TEST 1]
-        mininet> h1 ping -c5 h2
-        NON si dovrebbero pingare pero' si dovrebbe poter installare la regola'''
-        #self.test1(datapath)   
-
-        ''' [TEST 2]
-        mininet> h1 ping -c5 h2
-        NON si dovrebbe riuscire nemmeno ad installare la regola'''
-        #self.test2(datapath)   
-
-        ''' [TEST 3]
-        lo switch dovrebbe ritornare 4 errori perche non riempie mai il payload con fields'''
+        # [TEST 3]  OFPExpMsgKeyExtract: I should provide a number of fields >0 and <MAX_FIELD_COUNT
         #self.test3(datapath)
 
-        ''' [TEST 4]
-        lo switch dovrebbe ritornare error perche non riempie mai il payload con keys
-        '''
-        #self.test4(datapath)   
+        # [TEST 4] OFPExpMsgSetFlowState: I should provide a key of size >0 and <MAX_KEY_LEN
+        #self.test4(datapath)
+
+        # [TEST 5] OFPExpMsgSetFlowState: I should provide a key of size consistent with the number of fields of the update-scope
         #self.test5(datapath)
+
+        # [TEST 6] OFPExpMsgDelFlowState: I should provide a key of size consistent with the number of fields of the update-scope
         #self.test6(datapath)
 
-        ''' [TEST 7]
-        NON si dovrebbe poter eseguire il messaggio
-        '''
+        # [TEST 7] OFPExpMsgKeyExtract: lookup-scope and update-scope must provide same length keys
         #self.test7(datapath)
         #self.test7b(datapath)
 
-        ''' [TEST 8]
+        # [TEST 8] OFPExpMsgSetFlowState: must be executed onto a stage with table_id<=64 (number of pipeline's tables)
         #self.test8(datapath)
-        '''
 
         ####################################################################################################################
 
-        '''
-        [FLAGS]
+        ''' [GLOBAL STATES] '''
 
-        9) ping con match su exact flags [Flag mod msg con flags]
-        10) ping con match su flags con maschera [Flag mod msg con flags con maschera]
-        11) Set flags action con flags
-        12) Set flags action con flags con maschera
-        '''
+        # [TEST 9] exact match on global_state
+        # mininet> h5 ping -c5 h6
+        #self.test9(datapath)
 
-        ''' [TEST 9]
-        mininet> h5 ping -c5 h6
-        si dovrebbero pingare'''
-        #self.test9(datapath)  
-        
-        
-        ''' [TEST 10]
-        mininet> h5 ping -c5 h6
-        si dovrebbero pingare'''
-        #self.test10(datapath)  
-        
+        # [TEST 10] masked match on global_state
+        # mininet> h5 ping -c5 h6
+        #self.test10(datapath)
 
-        ''' [TEST 11]
-        mininet> h5 ping -c5 h6
-        Dovrebbe perdersi solo il primo ping'''
-        #self.test11(datapath)  
-        
+        # [TEST 11] exact match on global_state
+        # mininet> h5 ping -c5 h6
+        # the first ping should fail
+        #self.test11(datapath)
 
-        ''' [TEST 12]
-        mininet> h5 ping -c5 h6
-        Dovrebbe perdersi solo il primo ping'''
-        #self.test12(datapath)  
-
+        # [TEST 12] masked match on global_state
+        # mininet> h5 ping -c5 h6
+        # the first ping should fail
+        #self.test12(datapath)
 
     def add_flow(self, datapath, priority, match, actions):
 
@@ -251,10 +215,10 @@ class SimpleSwitch13(app_manager.RyuApp):
     def test9(self,datapath):
         self.send_table_mod(datapath)
         actions = [ofparser.OFPActionOutput(6,0)]
-        match = ofparser.OFPMatch(in_port=5,ip_proto=1,eth_type=0x800,flags=2863311530)
+        match = ofparser.OFPMatch(in_port=5,ip_proto=1,eth_type=0x800,global_state=2863311530)
         self.add_flow(datapath, 150, match, actions)
 
-        msg = osparser.OFPExpSetGlobalState(datapath=datapath, flag=2863311530, flag_mask=s0xffffffff)
+        msg = osparser.OFPExpSetGlobalState(datapath=datapath, global_state=2863311530, global_state_mask=0xffffffff)
         datapath.send_msg(msg)
 
         actions = [ofparser.OFPActionOutput(5,0)]
@@ -263,12 +227,12 @@ class SimpleSwitch13(app_manager.RyuApp):
 
     def test10(self,datapath):
         self.send_table_mod(datapath)
-        (flag, flag_mask) = osparser.maskedflags("1*1*1*1*1*1*1*1*0*0*1*1*1*1*1*1*")
+        (global_state, global_state_mask) = osparser.masked_global_state_from_str("1*1*1*1*1*1*1*1*0*0*1*1*1*1*1*1*")
         actions = [ofparser.OFPActionOutput(6,0)]
-        match = ofparser.OFPMatch(in_port=5,eth_type=0x800,ip_proto=1,flags=osparser.maskedflags("1*1*1*1*1*1*1*1*0*0*1*1*1*1*1*1*"))
+        match = ofparser.OFPMatch(in_port=5,eth_type=0x800,ip_proto=1,global_state=osparser.masked_global_state_from_str("1*1*1*1*1*1*1*1*0*0*1*1*1*1*1*1*"))
         self.add_flow(datapath, 150, match, actions)
 
-        msg = osparser.OFPExpSetGlobalState(datapath=datapath, flag=flag, flag_mask=flag_mask)
+        msg = osparser.OFPExpSetGlobalState(datapath=datapath, global_state=global_state, global_state_mask=global_state_mask)
         datapath.send_msg(msg)
 
         actions = [ofparser.OFPActionOutput(5,0)]
@@ -278,10 +242,10 @@ class SimpleSwitch13(app_manager.RyuApp):
     def test11(self,datapath):
         self.send_table_mod(datapath)
         actions = [ofparser.OFPActionOutput(6,0)]
-        match = ofparser.OFPMatch(in_port=5,ip_proto=1,eth_type=0x800,flags=1492)
+        match = ofparser.OFPMatch(in_port=5,ip_proto=1,eth_type=0x800,global_state=1492)
         self.add_flow(datapath, 200, match, actions)
 
-        actions = [osparser.OFPExpActionSetFlag(flag=1492)]
+        actions = [osparser.OFPExpActionSetGlobalState(global_state=1492)]
         match = ofparser.OFPMatch(in_port=5,eth_type=0x800,ip_proto=1)
         self.add_flow(datapath, 100, match, actions)
 
@@ -291,12 +255,12 @@ class SimpleSwitch13(app_manager.RyuApp):
 
     def test12(self,datapath):
         self.send_table_mod(datapath)
-        (flag, flag_mask) = osparser.maskedflags("*1*1*1*1*0*0*1*1*1*1*1*1*")
+        (global_state, global_state_mask) = osparser.masked_global_state_from_str("*1*1*1*1*0*0*1*1*1*1*1*1*")
         actions = [ofparser.OFPActionOutput(6,0)]
-        match = ofparser.OFPMatch(in_port=5,eth_type=0x800,ip_proto=1,flags=osparser.maskedflags("*1*1*1*1*0*0*1*1*1*1*1*1*"))
+        match = ofparser.OFPMatch(in_port=5,eth_type=0x800,ip_proto=1,global_state=osparser.masked_global_state_from_str("*1*1*1*1*0*0*1*1*1*1*1*1*"))
         self.add_flow(datapath, 200, match, actions)
 
-        actions = [osparser.OFPExpActionSetFlag(flag=flag, flag_mask=flag_mask)]
+        actions = [osparser.OFPExpActionSetGlobalState(global_state=global_state, global_state_mask=global_state_mask)]
         match = ofparser.OFPMatch(in_port=5,eth_type=0x800,ip_proto=1)
         self.add_flow(datapath, 100, match, actions)
 
